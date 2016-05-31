@@ -217,9 +217,9 @@ public abstract class MediaEncoder implements Runnable {
 	/*package*/ void pauseRecording() {
 		if (DEBUG) Log.v(TAG, "pauseRecording");
 		synchronized (mSync) {
+			pausePosition = System.nanoTime() / 1000L;
 			mIsPaused = true;
 			mPauseFlag = true;
-			mSync.notifyAll();
 		}
 //		synchronized (mSync) {
 //			if (!mIsCapturing || mRequestStop) {
@@ -238,9 +238,10 @@ public abstract class MediaEncoder implements Runnable {
 	/*package*/ void resumeRecording() {
 		if (DEBUG) Log.v(TAG, "resumeRecording");
 		synchronized (mSync) {
+			pauseTime += (System.nanoTime() / 1000L - pausePosition);
 			mIsPaused = false;
-			mResumeFlag = true;
-			mSync.notifyAll();
+			mPauseFlag = false;
+//			mResumeFlag = true;
 		}
 //		synchronized (mSync) {
 //			if (!mIsCapturing || mRequestStop) {
@@ -412,10 +413,14 @@ LOOP:	while (mIsCapturing) {
                         throw new RuntimeException("drain:muxer hasn't started");
                     }
                     // write encoded data to muxer(need to adjust presentationTimeUs.
-                   	mBufferInfo.presentationTimeUs = getPTSUs();
-					if (!mIsPaused)
-                   		muxer.writeSampleData(mTrackIndex, encodedData, mBufferInfo);
-					prevOutputPTSUs = mBufferInfo.presentationTimeUs;
+					synchronized (mSync) {
+						if (!mIsPaused) {
+							mBufferInfo.presentationTimeUs = getPTSUs();
+							muxer.writeSampleData(mTrackIndex, encodedData, mBufferInfo);
+							prevOutputPTSUs = mBufferInfo.presentationTimeUs;
+							Log.e("FUCK", Long.toString(prevOutputPTSUs));
+						}
+					}
                 }
                 // return buffer to encoder
                 mMediaCodec.releaseOutputBuffer(encoderStatus, false);
@@ -441,22 +446,25 @@ LOOP:	while (mIsCapturing) {
 	 * @return
 	 */
     protected long getPTSUs() {
-		long result = System.nanoTime() / 1000L;
+		long result = System.nanoTime() / 1000L - pauseTime;
 		// presentationTimeUs should be monotonic
 		// otherwise muxer fail to write
 		if (result < prevOutputPTSUs)
 			result = (prevOutputPTSUs - result) + result;
+//		synchronized (mSync) {
+//			if (mPauseFlag) {
+//				pausePosition = result;
+//				mPauseFlag = false;
+//			}
+//
+//			if (mResumeFlag) {
+//				pauseTime += (result - pausePosition);
+//				mResumeFlag = false;
+//			}
+//			mSync.notifyAll();
+//		}
 
-		if (mPauseFlag) {
-			pausePosition = result;
-			mPauseFlag = false;
-		}
-
-		if (mResumeFlag) {
-			pauseTime = (result - pausePosition);
-			mResumeFlag = false;
-		}
-		return result - pauseTime;
+		return result;
     }
 
 }
